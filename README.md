@@ -1,3 +1,12 @@
+export NCCL_P2P_LEVEL=NVL 
+export TOKENIZERS_PARALLELISM=false
+conda activate value_embedding
+cd /home/dchenbs/workspace/contrastors/src/contrastors
+
+CUDA_VISIBLE_DEVICES=2,3,4,5 torchrun --nproc-per-node=4 train.py --config=configs/train/value_embedding.yaml --dtype=bf16
+
+---
+
 # contrastors
 
 `contrastors` is contrastive learning toolkit that enables researchers and engineers to train and evaluate contrastive models efficiently.

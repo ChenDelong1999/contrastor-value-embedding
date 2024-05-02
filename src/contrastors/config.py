@@ -70,7 +70,7 @@ class TrainArgs(BaseModel):
 
 
 class DataArgs(BaseModel):
-    shuffle: bool
+    shuffle: Optional[bool] = True
     workers: int
     batch_size: int
     seed: int
@@ -110,7 +110,12 @@ class MLMDataArgs(DataArgs):
 
 
 class ContrastiveDataArgs(DataArgs):
-    input_shards: str
+    dataset_path: Optional[str] = ''
+    value_embedding: Optional[bool] = False
+    min_qa_per_view : Optional[int] = 1
+    max_qa_per_view : Optional[int] = 40
+
+    input_shards: Optional[str] = ''
     download: Optional[bool] = False
     process_one_shard: Optional[bool] = False
     streaming: Optional[bool] = True

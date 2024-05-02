@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
-from contrastors.dataset.torch_loader import StreamingShardDataset, collate_fn, get_local_dataloader
+from contrastors.dataset.torch_loader import StreamingShardDataset, collate_fn, get_local_dataloader, MultiViewValueQADataset
 from contrastors.distributed import gather
 from contrastors.loss import clip_loss, grad_cache_loss
 from contrastors.models import BiEncoder, BiEncoderConfig, LogitScale
@@ -73,7 +73,31 @@ class CLIPTrainer(BaseTrainer):
         data_config = config.contrastive_data_args
         model_args = config.model_args
         gradient_accumulation_steps = train_args.gradient_accumulation_steps
-        if data_config.streaming:
+        
+        if data_config.value_embedding:
+            train_dataset = MultiViewValueQADataset(
+                dataset_path=data_config.dataset_path,
+                min_qa_per_view=data_config.min_qa_per_view,
+                max_qa_per_view=data_config.max_qa_per_view,
+            )
+
+            batch_size = int(data_config.batch_size / self.num_processes)
+            train_dataloader = get_local_dataloader(
+                train_dataset,
+                batch_size,
+                self.tokenizer,
+                seed=data_config.seed,
+                add_prefix=model_args.add_prefix,
+                num_workers=data_config.workers,
+                epoch=0,
+            )
+
+            self.print(f"Len of train_dataloader: {len(train_dataset)}")
+            self.total_num_steps = int(
+                len(train_dataloader.dataset) / gradient_accumulation_steps // data_config.batch_size
+            )
+
+        elif data_config.streaming:
             train_dataset = StreamingShardDataset(
                 data_config.input_shards,
                 data_config.batch_size,
@@ -96,27 +120,27 @@ class CLIPTrainer(BaseTrainer):
             # round down in case
 
             self.total_num_steps = int(len(train_dataset) / gradient_accumulation_steps // data_config.batch_size)
-        else:
-            # config defines global batch size
-            if data_config.batch_size % self.num_processes != 0:
-                raise ValueError(
-                    f"Batch size {data_config.batch_size} must be divisible by accelerator.num_processes {self.num_processes}"
-                )
+        # else:
+            # # config defines global batch size
+            # if data_config.batch_size % self.num_processes != 0:
+            #     raise ValueError(
+            #         f"Batch size {data_config.batch_size} must be divisible by accelerator.num_processes {self.num_processes}"
+            #     )
 
-            batch_size = int(data_config.batch_size / self.num_processes)
-            train_dataloader = get_local_dataloader(
-                data_config.input_shards,
-                batch_size,
-                self.tokenizer,
-                seed=data_config.seed,
-                num_negatives=model_args.num_negatives,
-                add_prefix=model_args.add_prefix,
-                num_workers=data_config.workers,
-                epoch=0,
-            )
-            self.total_num_steps = int(
-                len(train_dataloader.dataset) / gradient_accumulation_steps // data_config.batch_size
-            )
+            # batch_size = int(data_config.batch_size / self.num_processes)
+            # train_dataloader = get_local_dataloader(
+            #     data_config.input_shards,
+            #     batch_size,
+            #     self.tokenizer,
+            #     seed=data_config.seed,
+            #     num_negatives=model_args.num_negatives,
+            #     add_prefix=model_args.add_prefix,
+            #     num_workers=data_config.workers,
+            #     epoch=0,
+            # )
+            # self.total_num_steps = int(
+            #     len(train_dataloader.dataset) / gradient_accumulation_steps // data_config.batch_size
+            # )
 
         return {"train": train_dataloader, "val": None, "test": None}
 
@@ -153,7 +177,7 @@ class CLIPTrainer(BaseTrainer):
 
     def _grad_cache_forward_step(self, model, batch, logit_scale, **kwargs):
         # TODO: could pass this to grad cache loss and log?
-        batch.pop("dataset_name")
+        # batch.pop("dataset_name")
         kwargs.pop("step")
         batch = {k: v.to(model.device) for k, v in batch.items()}
         query_inputs = {k.replace("query_", ""): v for k, v in batch.items() if "query" in k}

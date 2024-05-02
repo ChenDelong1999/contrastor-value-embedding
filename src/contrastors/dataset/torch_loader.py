@@ -32,6 +32,58 @@ def collate_fn(batch):
     return batch[0]
 
 
+import glob
+import random
+import numpy as np
+import pandas as pd
+from torch.utils.data import Dataset
+    
+
+class MultiViewValueQADataset(Dataset):
+    def __init__(self, dataset_path, min_qa_per_view=1, max_qa_per_view=40):
+        
+        self.all_qa_samples = self.read_samples(dataset_path)
+        self.value_idx_map = {i: k for i,k in enumerate(self.all_qa_samples.keys())}
+        self.min_qa_per_view = min_qa_per_view
+        self.max_qa_per_view = max_qa_per_view
+        
+        num_pair = []
+        for k, v in self.all_qa_samples.items():
+            num_pair.append(len(v))
+            print(f" [Value Dataset] {len(v)} samples in {k}")
+        self.end_value_idx = np.array(num_pair).cumsum()
+
+    def read_samples(self, path):
+        dfs = []
+        for path in sorted(glob.glob(f'{path}/*.csv*')):
+            print(f" [Value Dataset] Reading {path}")
+            dfs.append(pd.read_csv(path))
+        df = pd.concat(dfs)
+        df = df.dropna(subset=['answer']).reset_index(drop=True)
+        df['qa'] = df.apply(lambda x: f"Q: {x['question'].strip()} A: {x['answer'].strip()}", axis='columns')
+
+        samples = {f'{k[0]}${k[1]}': tdf['qa'].tolist() for k, tdf in df.groupby(['model', 'lang'])}
+        print(f" [Value Dataset] Total {len(samples)} values loaded")
+        return samples
+        
+    def __len__(self):
+        return self.end_value_idx[-1]
+
+    def __getitem__(self, idx):
+        value_idx = np.argmax(self.end_value_idx > idx)       
+        value_key = self.value_idx_map[value_idx]
+        qa_data = self.all_qa_samples[value_key]
+
+        view_1_num_qa = random.randint(self.min_qa_per_view, self.max_qa_per_view)
+        view_2_num_qa = random.randint(self.min_qa_per_view, self.max_qa_per_view)
+
+        view_1 = '\n'.join(random.sample(qa_data, min(len(qa_data), view_1_num_qa)))
+        view_2 = '\n'.join(random.sample(qa_data, min(len(qa_data), view_2_num_qa)))
+ 
+        sample = {'query': view_1, 'document': view_2, 'dataset_name': value_key} 
+        return sample
+    
+
 class StreamingShardDataset(IterableDataset):
     def __init__(
         self,
@@ -253,7 +305,6 @@ class StreamingShardDataset(IterableDataset):
                 raise ValueError(
                     f"Batch size {len(batch)} is too small, something went wrong on rank {self.rank} for path {normalized_path}"
                 )
-
             batch = self.tokenize_pairs(batch, self.path2objective[normalized_path])
 
             yield batch
@@ -615,8 +666,8 @@ def collate_local_ds(batch, tokenizer, add_prefix=False, query_only=None, path2p
     return tokenized_inputs
 
 
-def get_local_dataloader(ds_spec, batch_size, tokenizer, num_negatives, seed, add_prefix, num_workers=0, epoch=0):
-    dataset = LocalShardDataset(ds_spec, num_negatives=num_negatives, seed=seed)
+def get_local_dataloader(dataset, batch_size, tokenizer, seed, add_prefix, num_workers=0, epoch=0):
+    # dataset = LocalShardDataset(ds_spec, num_negatives=num_negatives, seed=seed)
     if dist.is_initialized():
         sampler = DistributedSampler(
             dataset, shuffle=True, num_replicas=dist.get_world_size(), rank=dist.get_rank(), seed=seed
@@ -626,7 +677,7 @@ def get_local_dataloader(ds_spec, batch_size, tokenizer, num_negatives, seed, ad
         sampler = None
 
     collate_fn = lambda x: collate_local_ds(
-        x, tokenizer, add_prefix=add_prefix, query_only=dataset.query_only, path2prefix=dataset.path2prefix
+        x, tokenizer#, add_prefix=add_prefix, query_only=dataset.query_only, path2prefix=dataset.path2prefix
     )
 
     dataloader = DataLoader(
