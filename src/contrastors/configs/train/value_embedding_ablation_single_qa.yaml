@@ -12,7 +12,7 @@ train_args:
   log_lr_every: 10
   save_every: 2500 
   chunk_size: 64
-  output_dir: "ckpts/nomic-embed-text-v1-len8192-bs64-4gpu-[1,80]QA-per-view"
+  output_dir: "ckpts/nomic-embed-text-v1-len256-bs64-4gpu-1-QA-per-view"
   # if using deepspeed, this will be ignored
   schedule_type: "inverse_sqrt"
   max_grad_norm: 1.0
@@ -28,7 +28,7 @@ model_args:
   logit_scale: 50
   trainable_logit_scale: false
   model_type: "encoder"
-  seq_len: 8192
+  seq_len: 256
   rotary_emb_fraction: 0.0
   pad_vocab_to_multiple_of: 64 
   use_rms_norm: false
@@ -49,5 +49,5 @@ contrastive_data_args:
   workers: 4 
   batch_size: 64
   min_qa_per_view: 1
-  max_qa_per_view: 80
+  max_qa_per_view: 1
   seed: 42
